@@ -1,0 +1,6 @@
+{
+  "identifier": "main-capability",
+  "description": "Somente operações de janela necessárias ao protótipo",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:window:allow-hide"]
+}
