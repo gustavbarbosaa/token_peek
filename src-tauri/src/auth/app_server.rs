@@ -1,49 +1,68 @@
-use super::models::AccountStatus;
+use super::models::{AccountStatus, UsageLimit, UsageSnapshot};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
-use tauri::State;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter};
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(20);
 
-pub struct AuthState {
-    home: PathBuf,
-    server: Mutex<Option<CodexAppServer>>,
-}
+#[cfg(target_os = "linux")]
+const AUTH_STORAGE: &str = "cli_auth_credentials_store=\"file\"";
 
-impl AuthState {
-    pub fn new(home: PathBuf) -> Self {
-        Self {
-            home,
-            server: Mutex::new(None),
+#[cfg(not(target_os = "linux"))]
+const AUTH_STORAGE: &str = "cli_auth_credentials_store=\"auto\"";
+
+fn codex_executable() -> PathBuf {
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path) {
+            let candidate = directory.join("codex");
+            if candidate.is_file() {
+                return candidate;
+            }
         }
     }
+
+    #[cfg(target_os = "linux")]
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        let local_install = home.join(".local/bin/codex");
+        if local_install.is_file() {
+            return local_install;
+        }
+
+        let node_versions = home.join(".nvm/versions/node");
+        if let Ok(versions) = std::fs::read_dir(node_versions) {
+            let mut candidates: Vec<PathBuf> = versions
+                .flatten()
+                .map(|entry| entry.path().join("bin/codex"))
+                .filter(|path| path.is_file())
+                .collect();
+            candidates.sort();
+            if let Some(candidate) = candidates.pop() {
+                return candidate;
+            }
+        }
+    }
+
+    Path::new("codex").to_path_buf()
 }
 
 pub(super) struct CodexAppServer {
     child: Child,
     stdin: ChildStdin,
     messages: Receiver<Value>,
-    pending: VecDeque<Value>,
     next_id: u64,
+    connected: Option<bool>,
+    pub(super) login_url: Option<String>,
 }
 
 impl CodexAppServer {
-    fn start(home: &PathBuf) -> Result<Self, String> {
-        let mut child = Command::new("codex")
-            .args([
-                "app-server",
-                "--listen",
-                "stdio://",
-                "-c",
-                "cli_auth_credentials_store=\"auto\"",
-            ])
+    pub(super) fn start(home: &Path, app: AppHandle) -> Result<Self, String> {
+        let mut child = Command::new(codex_executable())
+            .args(["app-server", "--listen", "stdio://", "-c", AUTH_STORAGE])
             .env("CODEX_HOME", home)
             .current_dir(home)
             .stdin(Stdio::piped())
@@ -70,7 +89,17 @@ impl CodexAppServer {
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else { break };
                 if let Ok(message) = serde_json::from_str::<Value>(&line) {
-                    if sender.send(message).is_err() {
+                    let is_usage_update = message.get("method").and_then(Value::as_str)
+                        == Some("account/rateLimits/updated");
+                    let limit_id = message
+                        .get("params")
+                        .and_then(|params| params.get("rateLimits"))
+                        .and_then(|limits| limits.get("limitId"))
+                        .and_then(Value::as_str);
+                    if is_usage_update && limit_id.is_none_or(|id| id == "codex") {
+                        let _ = app.emit("usage-changed", ());
+                    }
+                    if message.get("method").is_none() && sender.send(message).is_err() {
                         break;
                     }
                 }
@@ -81,8 +110,9 @@ impl CodexAppServer {
             child,
             stdin,
             messages,
-            pending: VecDeque::new(),
             next_id: 1,
+            connected: None,
+            login_url: None,
         };
         server.request(
             "initialize",
@@ -91,7 +121,8 @@ impl CodexAppServer {
                     "name": "token_peek",
                     "title": "Token Peek",
                     "version": env!("CARGO_PKG_VERSION")
-                }
+                },
+                "capabilities": { "experimentalApi": true }
             }),
         )?;
         server.notify("initialized", json!({}))?;
@@ -112,43 +143,57 @@ impl CodexAppServer {
     }
 
     pub(super) fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        Self::result(method, self.request_raw(method, params)?)
+    }
+
+    fn request_raw(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
+        let deadline = Instant::now() + RESPONSE_TIMEOUT;
         self.send(json!({ "method": method, "id": id, "params": params }))?;
 
-        if let Some(message) = self.take_pending_response(id) {
-            return Self::result(message);
-        }
-
-        loop {
-            let message = self
-                .messages
-                .recv_timeout(RESPONSE_TIMEOUT)
-                .map_err(|_| "O Codex app-server não respondeu a tempo.".to_string())?;
-            if message.get("id").and_then(Value::as_u64) == Some(id) {
-                return Self::result(message);
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match self.messages.recv_timeout(remaining) {
+                Ok(message) if message.get("id").and_then(Value::as_u64) == Some(id) => {
+                    return Ok(message);
+                }
+                Ok(_) => continue,
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("A conexão com o Codex app-server foi encerrada.".to_string());
+                }
             }
-
-            // Retain login completion and account notifications while other calls are in flight.
-            if self.pending.len() == 64 {
-                self.pending.pop_front();
-            }
-            self.pending.push_back(message);
         }
+        Err("O Codex app-server não respondeu a tempo.".to_string())
     }
 
-    fn take_pending_response(&mut self, id: u64) -> Option<Value> {
-        let position = self
-            .pending
-            .iter()
-            .position(|message| message.get("id").and_then(Value::as_u64) == Some(id))?;
-        self.pending.remove(position)
+    pub(super) fn is_running(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
     }
 
-    fn result(message: Value) -> Result<Value, String> {
-        if message.get("error").is_some() {
-            return Err("O Codex recusou a solicitação. Tente novamente ou reconecte a conta."
-                .to_string());
+    fn result(method: &str, message: Value) -> Result<Value, String> {
+        if let Some(error) = message.get("error") {
+            let code = error.get("code").and_then(Value::as_i64);
+            if method == "account/login/start" {
+                return Err(super::login::request_error(
+                    code,
+                    error.get("message").and_then(Value::as_str),
+                ));
+            }
+            if method == "account/rateLimits/read" {
+                return Err(super::rpc_error::limits_message(error));
+            }
+            let action = match method {
+                "initialize" => "iniciar a comunicação",
+                "account/read" => "consultar a conta",
+                "account/logout" => "desconectar a conta",
+                "account/login/cancel" => "cancelar a conexão",
+                _ => "processar a solicitação",
+            };
+            let detail = code
+                .map(|code| format!(" (código {code})"))
+                .unwrap_or_default();
+            return Err(format!("O Codex não conseguiu {action}{detail}."));
         }
         message
             .get("result")
@@ -156,22 +201,140 @@ impl CodexAppServer {
             .ok_or_else(|| "O Codex retornou uma resposta inválida.".to_string())
     }
 
+    fn read_account(&mut self, refresh_token: bool) -> Result<Value, String> {
+        let response = self.request("account/read", json!({ "refreshToken": refresh_token }))?;
+        self.connected =
+            Some(response.pointer("/account/type").and_then(Value::as_str) == Some("chatgpt"));
+        Ok(response)
+    }
+
+    pub(super) fn logout(&mut self) -> Result<(), String> {
+        self.request("account/logout", json!({}))?;
+        self.connected = Some(false);
+        Ok(())
+    }
+
     pub(super) fn account_status(&mut self) -> Result<AccountStatus, String> {
-        let response = self.request("account/read", json!({ "refreshToken": false }))?;
+        let response = self.read_account(false)?;
         let account = response.get("account");
-        let connected = account
-            .and_then(|value| value.get("type"))
-            .and_then(Value::as_str)
-            == Some("chatgpt");
+        let connected = self.connected == Some(true);
+        if connected {
+            self.login_url = None;
+        }
+        let workspace_name = connected
+            .then(|| {
+                account
+                    .and_then(|value| value.get("workspaceName"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+            })
+            .flatten();
+        let name = if connected {
+            self.account_display_name().or(workspace_name)
+        } else {
+            None
+        };
 
         Ok(AccountStatus {
             connected,
+            name,
             email: connected
                 .then(|| account?.get("email")?.as_str().map(str::to_owned))
                 .flatten(),
             plan_type: connected
                 .then(|| account?.get("planType")?.as_str().map(str::to_owned))
                 .flatten(),
+        })
+    }
+
+    fn account_display_name(&mut self) -> Option<String> {
+        let response = self.request("accountSession/list", json!({})).ok()?;
+        let sessions = response.get("sessions")?.as_array()?;
+        let active_session_id = response.get("activeSessionId").and_then(Value::as_str);
+        let active_session = sessions
+            .iter()
+            .find(|session| {
+                active_session_id
+                    .is_some_and(|id| session.get("sessionId").and_then(Value::as_str) == Some(id))
+            })
+            .or_else(|| {
+                sessions
+                    .iter()
+                    .find(|session| session.get("isActive").and_then(Value::as_bool) == Some(true))
+            })
+            .or_else(|| sessions.first())?;
+
+        active_session
+            .get("displayName")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+    }
+
+    pub(super) fn usage_snapshot(&mut self) -> Result<UsageSnapshot, String> {
+        if self.connected.is_none() {
+            self.read_account(false)?;
+        }
+        if self.connected != Some(true) {
+            return Err("Conecte sua conta para consultar o consumo.".to_string());
+        }
+        const METHOD: &str = "account/rateLimits/read";
+        let mut reply = self.request_raw(METHOD, json!({}))?;
+        if reply
+            .get("error")
+            .is_some_and(super::rpc_error::session_rejected)
+        {
+            // Renove apenas quando a consulta for rejeitada por autenticação.
+            self.read_account(true)?;
+            if self.connected != Some(true) {
+                return Err(
+                    "A sessão do Codex expirou. Reconecte a conta nas preferências.".into(),
+                );
+            }
+            reply = self.request_raw(METHOD, json!({}))?;
+        }
+        let response = Self::result(METHOD, reply)?;
+        let snapshot = response
+            .get("rateLimitsByLimitId")
+            .and_then(|limits| limits.get("codex"))
+            .or_else(|| response.get("rateLimits"))
+            .ok_or_else(|| "O Codex não retornou os limites da conta.".to_string())?;
+
+        let mut limits = Vec::new();
+        for (window, key) in [("primary", "primary"), ("secondary", "secondary")] {
+            if let Some(value) = snapshot.get(key) {
+                let Some(used_percent) =
+                    value
+                        .get("usedPercent")
+                        .and_then(Value::as_i64)
+                        .or_else(|| {
+                            value
+                                .get("usedPercent")
+                                .and_then(Value::as_f64)
+                                .map(|percent| percent.round() as i64)
+                        })
+                else {
+                    continue;
+                };
+
+                limits.push(UsageLimit {
+                    window: window.to_string(),
+                    used_percent: used_percent.clamp(0, 100) as i32,
+                    window_duration_mins: value.get("windowDurationMins").and_then(Value::as_i64),
+                    resets_at: value.get("resetsAt").and_then(Value::as_i64),
+                });
+            }
+        }
+
+        Ok(UsageSnapshot {
+            limits,
+            updated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_secs() as i64)
+                .unwrap_or_default(),
         })
     }
 }
@@ -181,27 +344,4 @@ impl Drop for CodexAppServer {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-pub(super) fn with_server<T>(
-    state: &State<'_, AuthState>,
-    operation: impl FnOnce(&mut CodexAppServer) -> Result<T, String>,
-) -> Result<T, String> {
-    let mut server = state
-        .server
-        .lock()
-        .map_err(|_| "O estado de autenticação ficou indisponível.".to_string())?;
-    if server
-        .as_mut()
-        .is_some_and(|process| process.child.try_wait().ok().flatten().is_some())
-    {
-        *server = None;
-    }
-    if server.is_none() {
-        *server = Some(CodexAppServer::start(&state.home)?);
-    }
-    let server = server
-        .as_mut()
-        .ok_or_else(|| "Não foi possível iniciar o Codex app-server.".to_string())?;
-    operation(server)
 }

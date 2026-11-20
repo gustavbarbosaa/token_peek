@@ -1,6 +1,23 @@
 {
   "identifier": "main-capability",
-  "description": "Somente operações de janela necessárias ao protótipo",
+  "description": "Consumo, conta, eventos e preferências da janela principal",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-hide"]
+  "permissions": [
+    "allow-auth-account-status",
+    "allow-auth-start",
+    "allow-auth-cancel",
+    "allow-auth-logout",
+    "allow-auth-open-verification-page",
+    "allow-usage-read",
+    "allow-uses-system-shortcut",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "autostart:default",
+    "global-shortcut:allow-is-registered",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-notify"
+  ]
 }
