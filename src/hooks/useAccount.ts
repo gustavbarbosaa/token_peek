@@ -7,6 +7,7 @@ export function useAccount() {
   const [loginPrompt, setLoginPrompt] = useState<LoginPrompt | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [statusAttempt, setStatusAttempt] = useState(0);
   const [statusError, setStatusError] = useState('');
 
   useEffect(() => {
@@ -39,7 +40,7 @@ export function useAccount() {
       active = false;
       if (timer) clearInterval(timer);
     };
-  }, [loginPrompt]);
+  }, [loginPrompt, statusAttempt]);
 
   async function connect(method: LoginMethod) {
     setLoading(true);
@@ -97,6 +98,11 @@ export function useAccount() {
   return {
     account,
     loginPrompt,
+    statusError,
+    retryStatus() {
+      setStatusError('');
+      setStatusAttempt((attempt) => attempt + 1);
+    },
     loading,
     error: error || statusError,
     connect,

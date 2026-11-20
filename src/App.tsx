@@ -97,72 +97,93 @@ export function App() {
       ) : (
         <article className="panel">
           <AppHeader account={account.account} />
-          <nav className="tabs" aria-label="Navegação">
-            <button
-              className={view === 'usage' ? 'selected' : ''}
-              aria-current={view === 'usage' ? 'page' : undefined}
-              onClick={() => setView('usage')}
-            >
-              Visão geral
-            </button>
-            <button
-              className={view === 'preferences' ? 'selected' : ''}
-              aria-current={view === 'preferences' ? 'page' : undefined}
-              onClick={() => setView('preferences')}
-            >
-              Preferências
-            </button>
-          </nav>
+          {isTauri() && account.account === null ? (
+            <section className="content" aria-label="Conta do Codex">
+              <div className="usage-message">
+                {account.statusError ? (
+                  <>
+                    <p role="alert">{account.statusError}</p>
+                    <button className="primary" onClick={account.retryStatus}>
+                      Tentar novamente
+                    </button>
+                  </>
+                ) : (
+                  <p role="status">Verificando sua conta do Codex…</p>
+                )}
+              </div>
+            </section>
+          ) : (
+            <>
+              <nav className="tabs" aria-label="Navegação">
+                <button
+                  className={view === 'usage' ? 'selected' : ''}
+                  aria-current={view === 'usage' ? 'page' : undefined}
+                  onClick={() => setView('usage')}
+                >
+                  Visão geral
+                </button>
+                <button
+                  className={view === 'preferences' ? 'selected' : ''}
+                  aria-current={view === 'preferences' ? 'page' : undefined}
+                  onClick={() => setView('preferences')}
+                >
+                  Preferências
+                </button>
+              </nav>
 
-          {view === 'usage' && (
-            <UsageView
-              usage={usage.usage}
-              connected={account.account?.connected ?? false}
-              desktop={isTauri()}
-              loading={usage.loading}
-              error={usage.error}
-              threshold={settings.preferences.threshold}
-              onConnect={() => openConnection('usage')}
-            />
-          )}
-          {view === 'preferences' && (
-            <PreferencesView
-              preferences={settings.draft}
-              shortcutError={settings.shortcutError}
-              systemShortcut={settings.systemShortcut}
-              saveError={settings.saveError}
-              saving={settings.saving}
-              connected={account.account?.connected ?? false}
-              onChange={settings.updateDraft}
-              onSave={async () => {
-                if (await settings.savePreferences()) {
-                  setToast({ text: 'Preferências salvas neste computador.' });
-                  setView('usage');
-                }
-              }}
-              onManageAccount={() => openConnection('preferences')}
-            />
-          )}
-          {view === 'connection' && (
-            <ConnectionView
-              account={account.account}
-              loginPrompt={account.loginPrompt}
-              loading={account.loading}
-              error={account.error}
-              onBack={() => setView(connectionOrigin.current)}
-              onConnect={account.connect}
-              onDisconnect={async () => {
-                if (await account.disconnect()) {
-                  setToast({ text: 'Conta desconectada.' });
-                }
-              }}
-              onCancel={async () => {
-                if (await account.cancelLogin()) {
-                  setToast({ text: 'Conexão cancelada.' });
-                }
-              }}
-              onOpenVerificationPage={account.openVerificationPage}
-            />
+              {view === 'usage' && (
+                <UsageView
+                  usage={usage.usage}
+                  connected={account.account?.connected ?? false}
+                  desktop={isTauri()}
+                  loading={usage.loading}
+                  error={usage.error}
+                  threshold={settings.preferences.threshold}
+                  onConnect={() => openConnection('usage')}
+                />
+              )}
+              {view === 'preferences' && (
+                <PreferencesView
+                  preferences={settings.draft}
+                  shortcutError={settings.shortcutError}
+                  systemShortcut={settings.systemShortcut}
+                  saveError={settings.saveError}
+                  saving={settings.saving}
+                  connected={account.account?.connected ?? false}
+                  onChange={settings.updateDraft}
+                  onSave={async () => {
+                    if (await settings.savePreferences()) {
+                      setToast({
+                        text: 'Preferências salvas neste computador.',
+                      });
+                      setView('usage');
+                    }
+                  }}
+                  onManageAccount={() => openConnection('preferences')}
+                />
+              )}
+              {view === 'connection' && (
+                <ConnectionView
+                  account={account.account}
+                  loginPrompt={account.loginPrompt}
+                  loading={account.loading}
+                  error={account.error}
+                  onBack={() => setView(connectionOrigin.current)}
+                  onConnect={account.connect}
+                  onDisconnect={async () => {
+                    if (await account.disconnect()) {
+                      setToast({ text: 'Conta desconectada.' });
+                    }
+                  }}
+                  onCancel={async () => {
+                    if (await account.cancelLogin()) {
+                      setToast({ text: 'Conexão cancelada.' });
+                    }
+                  }}
+                  onOpenVerificationPage={account.openVerificationPage}
+                />
+              )}
+            </>
           )}
         </article>
       )}
