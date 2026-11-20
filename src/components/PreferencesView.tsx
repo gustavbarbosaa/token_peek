@@ -83,10 +83,14 @@ export function PreferencesView({
             <div className="setting">
               <label htmlFor="start-on-system-startup">
                 Iniciar com o sistema
+                {import.meta.env.DEV && (
+                  <small>Configure esta opção no aplicativo instalado.</small>
+                )}
               </label>
               <input
                 className="switch"
                 id="start-on-system-startup"
+                disabled={import.meta.env.DEV}
                 type="checkbox"
                 role="switch"
                 checked={preferences.startOnSystemStartup}

@@ -157,7 +157,7 @@ export function usePreferences(
 
       let previousAutostart: boolean | undefined;
       try {
-        if (isTauri()) {
+        if (isTauri() && import.meta.env.PROD) {
           previousAutostart = await isAutostartEnabled();
           if (previousAutostart !== next.startOnSystemStartup) {
             if (next.startOnSystemStartup) await enableAutostart();
