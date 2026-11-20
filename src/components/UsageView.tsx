@@ -1,132 +1,208 @@
-import { Bell, ShieldCheck, Clock3 } from 'lucide-react';
-import { countdown, type Scenario, type UsageSnapshot } from '../usage';
+import { useEffect, useState } from 'react';
+import { Bell, Clock3 } from 'lucide-react';
+import {
+  countdown,
+  formatWindowDuration,
+  type UsageLimit,
+  type UsageSnapshot,
+} from '../usage';
 
 type UsageViewProps = {
-  usage: UsageSnapshot;
-  scenario: Scenario;
+  usage: UsageSnapshot | null;
+  connected: boolean;
+  desktop: boolean;
+  loading: boolean;
+  error: string;
   threshold: number;
-  now: number;
-  onScenarioChange: (scenario: Scenario) => void;
+  onConnect: () => void;
 };
 
-export function UsageView({
-  usage,
-  scenario,
+const dateTime = new Intl.DateTimeFormat('pt-BR', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+});
+
+function RenewalCountdown({ resetsAt }: { resetsAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+
+    function tick() {
+      const current = Date.now();
+      setNow(current);
+      const remaining = resetsAt - current;
+      if (remaining > 0) {
+        timer = setTimeout(tick, remaining % 60_000 || 60_000);
+      }
+    }
+
+    timer = setTimeout(tick, 0);
+    return () => clearTimeout(timer);
+  }, [resetsAt]);
+
+  return <strong>{countdown(resetsAt, now)}</strong>;
+}
+
+function UsageWindow({
+  limit,
+  stale,
   threshold,
-  now,
-  onScenarioChange,
-}: UsageViewProps) {
-  const low = usage.current.remaining <= threshold;
-  const exhausted = usage.current.remaining === 0;
+}: {
+  limit: UsageLimit;
+  stale: boolean;
+  threshold: number;
+}) {
+  const remaining = 100 - limit.usedPercent;
+  const low = remaining <= threshold;
+  const label =
+    limit.window === 'primary' ? 'Janela principal' : 'Janela secundária';
+
+  const resetsAt = limit.resetsAt ? limit.resetsAt * 1000 : null;
 
   return (
-    <section className="content">
-      <div className="section-heading">
-        <h1>SEUS LIMITES DO CODEX</h1>
-        <span className="live-label">DADOS SIMULADOS</span>
-      </div>
+    <article className="usage-window">
       <div className="metric-heading">
-        <h2>Janela atual</h2>
-        <span>5 horas · exemplo</span>
+        <h2>{label}</h2>
+        <span>{formatWindowDuration(limit.windowDurationMins)}</span>
       </div>
-      <div className={'big-number ' + (low ? 'warning-text' : '')}>
-        {usage.current.remaining}
-        <span>%</span>
-        <small>restantes</small>
+      <div className="metric-values">
+        <div
+          className={low ? 'big-number warning-text' : 'big-number'}
+          aria-hidden="true"
+        >
+          {limit.usedPercent}
+          <span>%</span>
+          <small>usados</small>
+        </div>
+        <p className="remaining">
+          <strong>{remaining}%</strong> restantes
+        </p>
       </div>
       <div
         className={'segments ' + (low ? 'warning' : '')}
-        role="progressbar"
-        aria-label="Limite atual restante"
-        aria-valuenow={usage.current.remaining}
+        role="meter"
+        aria-label={`Consumo da ${label.toLowerCase()}`}
+        aria-valuenow={limit.usedPercent}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuetext={`${usage.current.remaining}% restantes`}
+        aria-valuetext={`${limit.usedPercent}% consumido`}
       >
         {Array.from({ length: 25 }, (_, index) => (
           <i
             key={index}
-            className={
-              index < Math.ceil(usage.current.remaining / 4) ? 'filled' : ''
-            }
+            className={index < Math.ceil(limit.usedPercent / 4) ? 'filled' : ''}
           />
         ))}
       </div>
-      <div className="renewal">
-        <span>
-          <Clock3 size={13} />
-          Renova em
-        </span>
-        <strong>{countdown(usage.current.resetsAt, now)}</strong>
+      {resetsAt !== null && (
+        <div className="renewal">
+          <span>
+            <Clock3 size={14} aria-hidden="true" />
+            {stale ? 'Renovação prevista' : 'Renova em'}
+          </span>
+          {stale ? (
+            <time dateTime={new Date(resetsAt).toISOString()}>
+              {dateTime.format(resetsAt)}
+            </time>
+          ) : (
+            <RenewalCountdown resetsAt={resetsAt} />
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+export function UsageView({
+  usage,
+  connected,
+  desktop,
+  loading,
+  error,
+  threshold,
+  onConnect,
+}: UsageViewProps) {
+  const stale = Boolean(error && usage);
+  const lowestRemaining = usage
+    ? Math.min(...usage.limits.map((limit) => 100 - limit.usedPercent))
+    : 100;
+  const low = lowestRemaining <= threshold;
+  const exhausted = lowestRemaining === 0;
+
+  return (
+    <section className="content" aria-labelledby="usage-heading">
+      <div className="section-heading">
+        <h1 id="usage-heading" tabIndex={-1}>
+          Uso do Codex
+        </h1>
       </div>
-      <div className="divider" />
-      <div className="metric-heading">
-        <h2>Limite semanal</h2>
-        <span>7 dias · exemplo</span>
-      </div>
-      <div className="weekly-value">
-        <strong>
-          {usage.weekly.remaining}
-          <span>%</span>
-        </strong>
-        <span>restantes</span>
-      </div>
-      <div
-        className="week-bar"
-        role="progressbar"
-        aria-label="Limite semanal restante"
-        aria-valuenow={usage.weekly.remaining}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuetext={`${usage.weekly.remaining}% restantes`}
-      >
-        <div style={{ width: `${usage.weekly.remaining}%` }} />
-      </div>
-      <div className="renewal">
-        <span>Próxima renovação</span>
-        <strong>
-          {new Intl.DateTimeFormat('pt-BR', {
-            weekday: 'short',
-            day: '2-digit',
-            month: 'short',
-            hour: '2-digit',
-            minute: '2-digit',
-          }).format(usage.weekly.resetsAt)}
-        </strong>
-      </div>
-      <aside className={'callout ' + (low ? 'warning' : '')}>
-        {low ? <Bell size={17} /> : <ShieldCheck size={18} />}
-        <div>
-          <strong>
-            {exhausted
-              ? 'Hora de uma pausa'
-              : low
-                ? 'Seu limite está chegando ao fim'
-                : 'Pode seguir no seu ritmo'}
-          </strong>
+
+      {stale && usage && (
+        <div className="usage-stale" role="status">
+          <strong>Dados desatualizados</strong>
           <p>
-            {exhausted
-              ? 'O limite desta janela acabou no cenário simulado.'
-              : low
-                ? `Restam ${usage.current.remaining}% nesta janela. Confira o tempo até a renovação.`
-                : 'Você tem limite disponível para continuar.'}
+            Última leitura em{' '}
+            <time dateTime={new Date(usage.updatedAt).toISOString()}>
+              {dateTime.format(usage.updatedAt)}
+            </time>
+            .
           </p>
         </div>
-      </aside>
-      <div className="demo">
-        <label htmlFor="scenario">Explorar cenários</label>
-        <select
-          id="scenario"
-          value={scenario}
-          onChange={(event) =>
-            onScenarioChange(event.target.value as Scenario)
-          }
-        >
-          <option value="normal">Uso tranquilo</option>
-          <option value="low">Limite baixo</option>
-          <option value="exhausted">Limite esgotado</option>
-        </select>
-      </div>
+      )}
+
+      {!desktop ? (
+        <div className="usage-message">
+          <p>Os limites reais ficam disponíveis no aplicativo desktop.</p>
+        </div>
+      ) : !connected ? (
+        <div className="usage-message">
+          <p>
+            Conecte sua conta ChatGPT para consultar o consumo e os limites.
+          </p>
+          <button className="primary" onClick={onConnect}>
+            Conectar conta
+          </button>
+        </div>
+      ) : loading && !usage ? (
+        <div className="usage-message" role="status">
+          <p>Buscando os limites atuais da sua conta…</p>
+        </div>
+      ) : error && !usage ? (
+        <div className="usage-message" role="alert">
+          <p>{error}</p>
+          <small>
+            Confira a conexão da conta ou reconecte-a nas preferências.
+          </small>
+        </div>
+      ) : usage?.limits.length ? (
+        <>
+          <div className="usage-windows">
+            {usage.limits.map((limit) => (
+              <UsageWindow
+                key={limit.window}
+                limit={limit}
+                stale={stale}
+                threshold={threshold}
+              />
+            ))}
+          </div>
+          {!stale && low && (
+            <aside className="callout warning">
+              <Bell size={17} aria-hidden="true" />
+              <strong>
+                {exhausted
+                  ? 'Uma janela atingiu o limite'
+                  : 'Consumo próximo do limite'}
+              </strong>
+            </aside>
+          )}
+        </>
+      ) : (
+        <div className="usage-message">
+          <p>O Codex não informou janelas de limite para esta conta.</p>
+          <small>Isso pode variar conforme o plano e o estado da conta.</small>
+        </div>
+      )}
     </section>
   );
 }

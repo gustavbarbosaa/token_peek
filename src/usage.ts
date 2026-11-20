@@ -1,49 +1,33 @@
-export type Scenario = 'normal' | 'low' | 'exhausted';
-export interface UsageWindow {
-  remaining: number;
-  resetsAt: number;
+export interface UsageLimit {
+  window: 'primary' | 'secondary';
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
 }
+
 export interface UsageSnapshot {
-  current: UsageWindow;
-  weekly: UsageWindow;
+  limits: UsageLimit[];
   updatedAt: number;
 }
 
-export function getDemoUsage(scenario: Scenario): UsageSnapshot {
-  const now = Date.now();
-  const values = { normal: [72, 46], low: [12, 18], exhausted: [0, 8] }[
-    scenario
-  ];
-  return {
-    current: { remaining: values[0], resetsAt: now + 138 * 60_000 },
-    weekly: { remaining: values[1], resetsAt: now + 3 * 86_400_000 },
-    updatedAt: now,
-  };
-}
 export function countdown(resetsAt: number, now: number): string {
   const minutes = Math.max(0, Math.ceil((resetsAt - now) / 60_000));
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}min`;
 }
-export interface Preferences {
-  alerts: boolean;
-  threshold: number;
-}
-const defaults: Preferences = { alerts: true, threshold: 20 };
-export function readPreferences(): Preferences {
-  try {
-    const data: unknown = JSON.parse(
-      localStorage.getItem('token-peek:preferences') || 'null',
-    );
-    if (
-      data &&
-      typeof data === 'object' &&
-      'alerts' in data &&
-      typeof data.alerts === 'boolean' &&
-      'threshold' in data &&
-      typeof data.threshold === 'number' &&
-      [10, 20, 30].includes(data.threshold)
-    )
-      return { alerts: data.alerts, threshold: data.threshold };
-  } catch {}
-  return { ...defaults };
+
+export function formatWindowDuration(minutes: number | null): string {
+  if (!minutes) return 'Duração indisponível';
+  if (minutes % (60 * 24 * 7) === 0) {
+    const weeks = minutes / (60 * 24 * 7);
+    return weeks === 1 ? '7 dias' : `${weeks} semanas`;
+  }
+  if (minutes % (60 * 24) === 0) {
+    const days = minutes / (60 * 24);
+    return days === 1 ? '24 horas' : `${days} dias`;
+  }
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours === 1 ? '1 hora' : `${hours} horas`;
+  }
+  return `${minutes} min`;
 }

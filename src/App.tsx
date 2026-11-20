@@ -1,89 +1,93 @@
-import { useEffect, useState } from 'react';
-import { Activity, Check, ExternalLink } from 'lucide-react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useEffect, useRef, useState } from 'react';
+import { Activity, Check, CircleAlert, ExternalLink } from 'lucide-react';
 import { isTauri } from '@tauri-apps/api/core';
-import { AppFooter } from './components/AppFooter';
+import { listen } from '@tauri-apps/api/event';
 import { AppHeader } from './components/AppHeader';
 import { ConnectionView } from './components/ConnectionView';
 import { EmptyState } from './components/EmptyState';
 import { PreferencesView } from './components/PreferencesView';
 import { UsageView } from './components/UsageView';
 import { useAccount } from './hooks/useAccount';
-import {
-  getDemoUsage,
-  readPreferences,
-  type Preferences,
-  type Scenario,
-} from './usage';
+import { useLimitNotifications } from './hooks/useLimitNotifications';
+import { useUsage } from './hooks/useUsage';
+import { usePreferences } from './hooks/usePreferences';
 
 type View = 'usage' | 'preferences' | 'connection';
 
 export function App() {
   const [view, setView] = useState<View>('usage');
-  const [scenario, setScenario] = useState<Scenario>('normal');
-  const [usage, setUsage] = useState(() => getDemoUsage('normal'));
-  const [preferences, setPreferences] = useState(readPreferences);
-  const [now, setNow] = useState(Date.now());
-  const [message, setMessage] = useState('');
+  const connectionOrigin = useRef<'usage' | 'preferences'>('usage');
+  const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(
+    null,
+  );
+  const settings = usePreferences(setToast);
   const [hidden, setHidden] = useState(false);
+  const previousScreen = useRef<string | null>(null);
   const account = useAccount();
+  const usage = useUsage(account.account);
+  useLimitNotifications(
+    usage.error ? null : usage.usage,
+    account.account?.email ?? 'connected-account',
+    account.account?.connected ?? false,
+    settings.preferences.alerts,
+    settings.preferences.threshold,
+  );
+
+  const screen = hidden ? 'empty' : view;
+  useEffect(() => {
+    if (previousScreen.current !== null && previousScreen.current !== screen) {
+      document.getElementById(`${screen}-heading`)?.focus();
+    }
+    previousScreen.current = screen;
+  }, [screen]);
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
+    if (!isTauri()) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+
+    void listen('show-usage-view', () => {
+      if (active) setView('usage');
+    })
+      .then((stopListening) => {
+        if (active) unlisten = stopListening;
+        else stopListening();
+      })
+      .catch((error: unknown) =>
+        console.warn('Falha ao acompanhar a abertura da janela:', error),
+      );
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
-    if (!message) return;
-    const timer = setTimeout(() => setMessage(''), 4000);
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(timer);
-  }, [message]);
+  }, [toast]);
 
-  async function hide() {
-    if (isTauri()) {
-      try {
-        await getCurrentWindow().hide();
-      } catch {
-        setMessage('Não foi possível recolher a janela.');
-      }
-    } else {
-      setHidden(true);
-    }
-  }
-
-  function savePreferences() {
-    try {
-      localStorage.setItem(
-        'token-peek:preferences',
-        JSON.stringify(preferences),
-      );
-      setMessage('Preferências salvas neste computador.');
-      setView('usage');
-    } catch {
-      setMessage('Não foi possível salvar as preferências.');
-    }
-  }
-
-  function selectScenario(value: Scenario) {
-    setScenario(value);
-    setUsage(getDemoUsage(value));
-  }
-
-  function updatePreferences(value: Preferences) {
-    setPreferences(value);
+  function openConnection(origin: 'usage' | 'preferences') {
+    connectionOrigin.current = origin;
+    setView('connection');
   }
 
   return (
-    <main className="workspace">
+    <main className={isTauri() ? 'workspace' : 'workspace web-preview'}>
       {!isTauri() && (
         <div className="preview-bar">
           <span>
             <Activity size={14} /> Token Peek{' '}
             <span className="preview-label">/ prévia web</span>
           </span>
-          <button onClick={() => setHidden(!hidden)}>
-            <span className="status-dot" />
-            {usage.current.remaining}%
+          <button
+            type="button"
+            aria-expanded={!hidden}
+            onClick={() => setHidden(!hidden)}
+          >
+            {hidden ? 'Mostrar painel' : 'Ocultar painel'}
           </button>
         </div>
       )}
@@ -92,23 +96,18 @@ export function App() {
         <EmptyState onOpen={() => setHidden(false)} />
       ) : (
         <article className="panel">
-          <AppHeader
-            account={account.account}
-            showPreferences={view === 'preferences'}
-            onTogglePreferences={() =>
-              setView(view === 'preferences' ? 'usage' : 'preferences')
-            }
-            onHide={hide}
-          />
+          <AppHeader account={account.account} />
           <nav className="tabs" aria-label="Navegação">
             <button
               className={view === 'usage' ? 'selected' : ''}
+              aria-current={view === 'usage' ? 'page' : undefined}
               onClick={() => setView('usage')}
             >
               Visão geral
             </button>
             <button
               className={view === 'preferences' ? 'selected' : ''}
+              aria-current={view === 'preferences' ? 'page' : undefined}
               onClick={() => setView('preferences')}
             >
               Preferências
@@ -117,20 +116,31 @@ export function App() {
 
           {view === 'usage' && (
             <UsageView
-              usage={usage}
-              scenario={scenario}
-              threshold={preferences.threshold}
-              now={now}
-              onScenarioChange={selectScenario}
+              usage={usage.usage}
+              connected={account.account?.connected ?? false}
+              desktop={isTauri()}
+              loading={usage.loading}
+              error={usage.error}
+              threshold={settings.preferences.threshold}
+              onConnect={() => openConnection('usage')}
             />
           )}
           {view === 'preferences' && (
             <PreferencesView
-              preferences={preferences}
+              preferences={settings.draft}
+              shortcutError={settings.shortcutError}
+              systemShortcut={settings.systemShortcut}
+              saveError={settings.saveError}
+              saving={settings.saving}
               connected={account.account?.connected ?? false}
-              onChange={updatePreferences}
-              onSave={savePreferences}
-              onManageAccount={() => setView('connection')}
+              onChange={settings.updateDraft}
+              onSave={async () => {
+                if (await settings.savePreferences()) {
+                  setToast({ text: 'Preferências salvas neste computador.' });
+                  setView('usage');
+                }
+              }}
+              onManageAccount={() => openConnection('preferences')}
             />
           )}
           {view === 'connection' && (
@@ -139,47 +149,37 @@ export function App() {
               loginPrompt={account.loginPrompt}
               loading={account.loading}
               error={account.error}
-              onBack={() => setView('preferences')}
+              onBack={() => setView(connectionOrigin.current)}
               onConnect={account.connect}
               onDisconnect={async () => {
                 if (await account.disconnect()) {
-                  setMessage('Conta desconectada.');
+                  setToast({ text: 'Conta desconectada.' });
                 }
               }}
               onCancel={async () => {
                 if (await account.cancelLogin()) {
-                  setMessage('Conexão cancelada.');
+                  setToast({ text: 'Conexão cancelada.' });
                 }
               }}
               onOpenVerificationPage={account.openVerificationPage}
-              onContinueDemo={() => {
-                setView('usage');
-                setMessage('Você está explorando com dados simulados.');
-              }}
             />
           )}
-
-          <AppFooter
-            updatedAt={usage.updatedAt}
-            now={now}
-            onRefresh={() => {
-              setUsage(getDemoUsage(scenario));
-              setMessage('Dados simulados atualizados.');
-            }}
-          />
         </article>
       )}
 
-      {message && (
-        <div className="toast" role="status">
-          <Check size={15} />
-          {message}
+      {toast && (
+        <div
+          className={toast.error ? 'toast toast-error' : 'toast'}
+          role={toast.error ? 'alert' : 'status'}
+        >
+          {toast.error ? <CircleAlert size={15} /> : <Check size={15} />}
+          {toast.text}
         </div>
       )}
       {!isTauri() && (
         <p className="preview-caption">
-          <ExternalLink size={12} /> Protótipo local · nenhum dado real é
-          acessado
+          <ExternalLink size={12} /> Prévia local · conecte a conta no app
+          desktop para consultar limites
         </p>
       )}
     </main>

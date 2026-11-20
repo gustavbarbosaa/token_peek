@@ -1,6 +1,6 @@
 import { ChevronLeft, ExternalLink, Link2, ShieldCheck } from 'lucide-react';
 import { isTauri } from '@tauri-apps/api/core';
-import type { AccountStatus, LoginPrompt } from '../types/auth';
+import type { AccountStatus, LoginMethod, LoginPrompt } from '../types/auth';
 
 type ConnectionViewProps = {
   account: AccountStatus | null;
@@ -8,11 +8,10 @@ type ConnectionViewProps = {
   loading: boolean;
   error: string;
   onBack: () => void;
-  onConnect: () => void;
+  onConnect: (method: LoginMethod) => void;
   onDisconnect: () => void;
   onCancel: () => void;
   onOpenVerificationPage: () => void;
-  onContinueDemo: () => void;
 };
 
 export function ConnectionView({
@@ -25,10 +24,12 @@ export function ConnectionView({
   onDisconnect,
   onCancel,
   onOpenVerificationPage,
-  onContinueDemo,
 }: ConnectionViewProps) {
   return (
-    <section className="content connection">
+    <section
+      className="content connection"
+      aria-labelledby="connection-heading"
+    >
       <button className="text-button back" onClick={onBack}>
         <ChevronLeft size={15} />
         Voltar
@@ -36,10 +37,12 @@ export function ConnectionView({
       <div className="connection-icon">
         <Link2 size={27} />
       </div>
-      <h1>{account?.connected ? 'Conta conectada.' : 'Conecte sua conta.'}</h1>
+      <h1 id="connection-heading" tabIndex={-1}>
+        {account?.connected ? 'Conta conectada' : 'Conectar conta'}
+      </h1>
       <p className="subtitle">
         {account?.connected
-          ? `${account.email || 'Conta ChatGPT'}${
+          ? `${account.name || 'Conta ChatGPT'}${
               account.planType ? ` · plano ${account.planType}` : ''
             }`
           : 'Entre com sua conta ChatGPT para autorizar o Token Peek.'}
@@ -47,8 +50,8 @@ export function ConnectionView({
       <div className="help">
         <ShieldCheck size={19} />
         <p>
-          O Codex app-server gerencia o login e a sessão em um espaço isolado. A
-          interface do Token Peek não recebe tokens.
+          Você autoriza o acesso na página da OpenAI. O Token Peek não pede sua
+          senha.
         </p>
       </div>
       {!isTauri() && (
@@ -59,19 +62,38 @@ export function ConnectionView({
       )}
       {loginPrompt && !account?.connected && (
         <div className="login-code">
-          <span>CÓDIGO DE AUTORIZAÇÃO</span>
-          <strong>{loginPrompt.userCode}</strong>
+          {loginPrompt.userCode ? (
+            <>
+              <p className="sr-only" role="status">
+                Código pronto para autorizar a conta.
+              </p>
+              <span>Código de autorização</span>
+              <strong>{loginPrompt.userCode}</strong>
+              <small>
+                Digite o código na página da OpenAI e autorize o acesso.
+              </small>
+            </>
+          ) : (
+            <p className="subtitle" role="status">
+              Conclua o login no navegador e volte ao Token Peek.
+            </p>
+          )}
           <button className="text-button" onClick={onOpenVerificationPage}>
             <ExternalLink size={15} />
-            Abrir página segura da OpenAI
+            {loginPrompt.userCode
+              ? 'Abrir página da OpenAI'
+              : 'Reabrir página de login'}
           </button>
-          <small>Digite o código acima e aprove o acesso.</small>
           <button className="text-button" onClick={onCancel}>
             Cancelar conexão
           </button>
         </div>
       )}
-      {error && <p className="auth-error">{error}</p>}
+      {error && (
+        <p className="auth-error" role="alert">
+          {error}
+        </p>
+      )}
       {account?.connected ? (
         <button
           className="text-button"
@@ -81,21 +103,29 @@ export function ConnectionView({
           Desconectar conta
         </button>
       ) : (
-        <button
-          className="primary"
-          onClick={onConnect}
-          disabled={!isTauri() || loading || !!loginPrompt}
-        >
-          {loading
-            ? 'Preparando conexão…'
-            : loginPrompt
-              ? 'Aguardando autorização…'
-              : 'Entrar com ChatGPT'}
-        </button>
+        !loginPrompt && (
+          <>
+            <button
+              className="primary"
+              onClick={() => onConnect('browser')}
+              disabled={!isTauri() || loading}
+            >
+              {loading
+                ? 'Preparando conexão…'
+                : 'Entrar com ChatGPT pelo navegador'}
+            </button>
+            {isTauri() && (
+              <button
+                className="text-button"
+                onClick={() => onConnect('device')}
+                disabled={loading}
+              >
+                Entrar com código de dispositivo
+              </button>
+            )}
+          </>
+        )
       )}
-      <button className="text-button" onClick={onContinueDemo}>
-        Continuar na demonstração
-      </button>
     </section>
   );
 }

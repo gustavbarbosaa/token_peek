@@ -1,26 +1,35 @@
 import { useEffect, useState } from 'react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import type { AccountStatus, LoginPrompt } from '../types/auth';
+import type { AccountStatus, LoginMethod, LoginPrompt } from '../types/auth';
 
 export function useAccount() {
   const [account, setAccount] = useState<AccountStatus | null>(null);
   const [loginPrompt, setLoginPrompt] = useState<LoginPrompt | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [statusError, setStatusError] = useState('');
 
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
+    let inFlight = false;
 
     async function refreshAccount() {
+      if (!active || inFlight) return;
+      inFlight = true;
       try {
         const status = await invoke<AccountStatus>('auth_account_status');
         if (!active) return;
         setAccount(status);
-        setError('');
-        if (status.connected) setLoginPrompt(null);
+        setStatusError('');
+        if (status.connected) {
+          setLoginPrompt(null);
+          setError('');
+        }
       } catch (error) {
-        if (active) setError(String(error));
+        if (active) setStatusError(String(error));
+      } finally {
+        inFlight = false;
       }
     }
 
@@ -32,12 +41,14 @@ export function useAccount() {
     };
   }, [loginPrompt]);
 
-  async function connect() {
+  async function connect(method: LoginMethod) {
     setLoading(true);
     setError('');
     try {
-      const prompt = await invoke<LoginPrompt>('auth_start');
+      const prompt = await invoke<LoginPrompt>('auth_start', { method });
+      setStatusError('');
       setLoginPrompt(prompt);
+      if (method === 'browser') await openVerificationPage();
     } catch (error) {
       setError(String(error));
     } finally {
@@ -63,6 +74,7 @@ export function useAccount() {
 
   async function cancelLogin(): Promise<boolean> {
     if (!loginPrompt) return false;
+    setError('');
     try {
       await invoke('auth_cancel', { loginId: loginPrompt.loginId });
       setLoginPrompt(null);
@@ -74,6 +86,7 @@ export function useAccount() {
   }
 
   async function openVerificationPage() {
+    setError('');
     try {
       await invoke('auth_open_verification_page');
     } catch (error) {
@@ -85,7 +98,7 @@ export function useAccount() {
     account,
     loginPrompt,
     loading,
-    error,
+    error: error || statusError,
     connect,
     disconnect,
     cancelLogin,

@@ -1,56 +1,38 @@
-import { Activity, Settings, X } from 'lucide-react';
+import { Activity } from 'lucide-react';
 import type { AccountStatus } from '../types/auth';
 
 type AppHeaderProps = {
   account: AccountStatus | null;
-  showPreferences: boolean;
-  onTogglePreferences: () => void;
-  onHide: () => void;
 };
 
-export function AppHeader({
-  account,
-  showPreferences,
-  onTogglePreferences,
-  onHide,
-}: AppHeaderProps) {
+export function AppHeader({ account }: AppHeaderProps) {
   return (
-    <>
-      <header className="header">
-        <div className="brand">
-          <span className="brand-icon">
-            <Activity size={20} />
-          </span>
-          <span>Token Peek</span>
-        </div>
-        <div className="actions">
-          <button
-            className={showPreferences ? 'icon-button active' : 'icon-button'}
-            aria-label="Preferências"
-            onClick={onTogglePreferences}
-          >
-            <Settings size={17} />
-          </button>
-          <button
-            className="icon-button"
-            aria-label="Recolher painel"
-            onClick={onHide}
-          >
-            <X size={18} />
-          </button>
-        </div>
-      </header>
-      <div className="account">
-        <span>
-          <span className="status-dot" />
-          {account?.connected
-            ? account.email || 'Conta conectada'
-            : 'Modo demonstração'}
+    <header className="header">
+      <div className="brand">
+        <span className="brand-icon" aria-hidden="true">
+          <Activity size={20} />
         </span>
-        <span className="badge">
-          {account?.connected ? 'CONECTADA' : 'SEM CONTA'}
-        </span>
+        <span>Token Peek</span>
       </div>
-    </>
+      <div className="account" role="status">
+        <span
+          className={account?.connected ? 'status-dot online' : 'status-dot'}
+        />
+        {account?.connected && account.name ? (
+          <span>
+            <span className="sr-only">Conta conectada: </span>
+            {account.name}
+          </span>
+        ) : (
+          <span>
+            {account?.connected
+              ? 'Conta conectada'
+              : account
+                ? 'Conta desconectada'
+                : 'Conta não verificada'}
+          </span>
+        )}
+      </div>
+    </header>
   );
 }
