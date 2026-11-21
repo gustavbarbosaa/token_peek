@@ -33,8 +33,9 @@ parts:
   token-peek:
     plugin: nil
     source: .
-    build-snaps: [node/22/stable, rustup/latest/stable]
+    build-snaps: [node/22/stable]
     build-packages:
+      - rustup
       - build-essential
       - pkg-config
       - libwebkit2gtk-4.1-dev
@@ -44,11 +45,15 @@ parts:
       - libssl-dev
     stage-packages: [libxdo3]
     override-build: |
-      rustup default stable
-      HUSKY=0 npm ci
-      export CARGO_TARGET_DIR="$CRAFT_PART_BUILD/src-tauri/target"
-      npm run tauri build -- --no-bundle -- --locked
-      craftctl set version="$(node -p "require('./package.json').version")"
+      (
+        # Execute as ferramentas com a glibc da base core24.
+        unset LD_LIBRARY_PATH
+        /usr/bin/rustup default stable
+        HUSKY=0 npm ci
+        export CARGO_TARGET_DIR="$CRAFT_PART_BUILD/src-tauri/target"
+        npm run tauri build -- --no-bundle -- --locked
+      )
+      craftctl set version="$(env -u LD_LIBRARY_PATH node -p "require('./package.json').version")"
       install -Dm755 src-tauri/target/release/token-peek "$CRAFT_PART_INSTALL/usr/bin/token-peek"
       install -Dm644 src-tauri/icons/icon.png "$CRAFT_PART_INSTALL/usr/share/icons/token-peek.png"
       install -Dm644 -t "$CRAFT_PART_INSTALL/usr/share/doc/codex/" snap/licenses/codex/LICENSE snap/licenses/codex/NOTICE
