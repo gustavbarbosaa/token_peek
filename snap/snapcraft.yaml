@@ -1,0 +1,61 @@
+name: token-peek
+title: Token Peek
+base: core24
+adopt-info: token-peek
+summary: Acompanhe o consumo e os limites da sua conta Codex
+description: |
+  Consulte suas janelas de consumo, acompanhe quando a cota será renovada
+  e receba alertas no desktop. Conecte sua conta ChatGPT pelo navegador
+  ou por código de dispositivo. Aplicativo independente.
+grade: stable
+confinement: strict
+platforms:
+  amd64:
+icon: src-tauri/icons/icon.png
+
+apps:
+  token-peek:
+    command: usr/bin/token-peek
+    extensions: [gnome]
+    autostart: token-peek.desktop
+    slots: [single-instance]
+    plugs: [network, network-bind, desktop-legacy]
+    environment:
+      WEBKIT_EXEC_PATH: $SNAP/gnome-platform/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1
+
+slots:
+  single-instance:
+    interface: dbus
+    bus: session
+    name: io.tokenpeek.desktop.SingleInstance
+
+parts:
+  token-peek:
+    plugin: nil
+    source: .
+    build-snaps: [node/22/stable, rustup/latest/stable]
+    build-packages:
+      - build-essential
+      - pkg-config
+      - libwebkit2gtk-4.1-dev
+      - libayatana-appindicator3-dev
+      - libxdo-dev
+      - librsvg2-dev
+      - libssl-dev
+    stage-packages: [libxdo3]
+    override-build: |
+      rustup default stable
+      HUSKY=0 npm ci
+      export CARGO_TARGET_DIR="$CRAFT_PART_BUILD/src-tauri/target"
+      npm run tauri build -- --no-bundle -- --locked
+      craftctl set version="$(node -p "require('./package.json').version")"
+      install -Dm755 src-tauri/target/release/token-peek "$CRAFT_PART_INSTALL/usr/bin/token-peek"
+      install -Dm644 src-tauri/icons/icon.png "$CRAFT_PART_INSTALL/usr/share/icons/token-peek.png"
+      install -Dm644 -t "$CRAFT_PART_INSTALL/usr/share/doc/codex/" snap/licenses/codex/LICENSE snap/licenses/codex/NOTICE
+  codex:
+    plugin: nil
+    source: https://registry.npmjs.org/@openai/codex/-/codex-0.167.1-linux-x64.tgz
+    source-type: tar
+    source-checksum: sha512/a99b5e825caf3028f5415ca63323f229db70dfc1da5c2bf982fc3c58df8dd3e249b2dbb793f77cc62623f5c88becec052e172e8e03fc6c218981a4447aaac793
+    override-build: |
+      install -Dm755 vendor/x86_64-unknown-linux-musl/bin/codex "$CRAFT_PART_INSTALL/usr/bin/codex"

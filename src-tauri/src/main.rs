@@ -15,12 +15,19 @@ fn uses_system_shortcut() -> bool {
 }
 
 fn main() {
+    let autostart = tauri_plugin_autostart::Builder::new();
+    #[cfg(target_os = "linux")]
+    let autostart = if std::env::var("SNAP_NAME").as_deref() == Ok("token-peek") {
+        autostart.app_name("token-peek")
+    } else {
+        autostart
+    };
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || tray::show_usage(&handle));
         }))
-        .plugin(tauri_plugin_autostart::Builder::new().build());
+        .plugin(autostart.build());
     let builder = if uses_system_shortcut() {
         builder
     } else {
