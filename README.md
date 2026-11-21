@@ -57,7 +57,7 @@ O aplicativo desktop oferece avisos de limite, inicialização automática e um 
 
 ## Autenticação
 
-O login funciona apenas no app desktop Tauri e requer o Codex CLI instalado, com o comando `codex` disponível no `PATH`. O app inicia `codex app-server` por comunicação local via entrada e saída padrão e oferece login no navegador e login por código de dispositivo. A autorização ocorre na página oficial da OpenAI. Para usar o código, o login por dispositivo precisa estar habilitado na conta ou no espaço de trabalho.
+O login funciona no aplicativo desktop Tauri. O Snap inclui o Codex CLI. No pacote Debian e no desenvolvimento local, instale o CLI e disponibilize o comando `codex` no `PATH`. O app inicia `codex app-server` por comunicação local via entrada e saída padrão e oferece login no navegador e login por código de dispositivo. A autorização ocorre na página oficial da OpenAI. Para usar o código, o login por dispositivo precisa estar habilitado na conta ou no espaço de trabalho.
 
 O Token Peek não pede senha ou chave de API e não expõe tokens ao frontend. O Codex app-server gerencia a sessão em um diretório exclusivo do Token Peek, dentro dos dados locais do aplicativo. No Linux, o Codex usa armazenamento em arquivo nesse diretório privado, com acesso restrito ao usuário. A migração do modo automático para o armazenamento em arquivo pode exigir uma nova conexão se a sessão anterior estiver apenas no chaveiro. Conectar ou desconectar o Token Peek não altera a sessão usada pelo Codex CLI. A prévia servida pelo Docker não acessa autenticação nem credenciais.
 
@@ -96,6 +96,19 @@ npm run tauri build -- --bundles deb -- --locked
 ```
 
 O instalador fica em `src-tauri/target/release/bundle/deb/`. Quem for apenas usar o app pode baixar o `.deb` e instalar com `sudo apt install ./nome-do-arquivo.deb`. O Codex CLI precisa estar instalado separadamente para conectar a conta e consultar os limites.
+
+### Snap para Ubuntu (amd64)
+
+O Snap inclui o cliente nativo do Codex e usa confinamento estrito. Para gerar um pacote de teste, execute o workflow manual **Snap de teste** no GitHub Actions e baixe o artefato. Para compilar localmente, execute `snapcraft pack` na raiz do projeto com Snapcraft e um provedor de build configurados.
+
+Extraia o arquivo do artefato e, em uma máquina Ubuntu de teste, execute na pasta do pacote:
+
+```bash
+sudo snap install --dangerous ./token-peek_0.1.4_amd64.snap
+snap run token-peek
+```
+
+A opção `--dangerous` permite instalar o arquivo local sem assinatura da loja. Para validar a experiência de quem instala pela primeira vez, use uma sessão gráfica limpa, abra o app, conecte a conta e confira a leitura dos limites. Feche a janela e reabra pela bandeja. Ative **Iniciar com o sistema**, encerre a sessão e entre novamente. O workflow gera um artefato de teste e a publicação na Snap Store é uma etapa posterior.
 
 ### Disponibilizar no GitHub
 
