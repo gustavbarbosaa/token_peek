@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Token Peek
+Comment=Acompanhe o consumo da sua conta Codex
+Exec=token-peek
+Icon=${SNAP}/usr/share/icons/token-peek.png
+Terminal=false
+Categories=Utility;

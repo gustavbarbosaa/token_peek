@@ -17,6 +17,12 @@ const AUTH_STORAGE: &str = "cli_auth_credentials_store=\"file\"";
 const AUTH_STORAGE: &str = "cli_auth_credentials_store=\"auto\"";
 
 fn codex_executable() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    if std::env::var("SNAP_NAME").as_deref() == Ok("token-peek") {
+        if let Some(root) = std::env::var_os("SNAP") {
+            return PathBuf::from(root).join("usr/bin/codex");
+        }
+    }
     if let Some(path) = std::env::var_os("PATH") {
         for directory in std::env::split_paths(&path) {
             let candidate = directory.join("codex");
